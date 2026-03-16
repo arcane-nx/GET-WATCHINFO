@@ -1,7 +1,7 @@
 {
   "name": "anime-scraper-api",
   "version": "1.0.0",
-  "description": "An Express API for scraping anime download links",
+  "description": "An Express API for scraping anime download links using Playwright",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -10,9 +10,11 @@
   "author": "arcane",
   "license": "ISC",
   "dependencies": {
-    "axios": "^1.6.8",
     "cheerio": "^1.0.0-rc.12",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "playwright": "^1.42.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
