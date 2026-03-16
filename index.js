@@ -1,11 +1,18 @@
 const express = require('express');
-const axios = require('axios');
 const cheerio = require('cheerio');
+const { chromium } = require('playwright-extra');
+const stealth = require('puppeteer-extra-plugin-stealth')();
+
+// Apply stealth plugin to Playwright
+chromium.use(stealth);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 7860;
 
-// --- Utility Functions ---
+// Global Browser Instance
+let globalBrowser;
+
+// --- Utility Functions for Kwik Packer ---
 const _0xc2e = ["", "split", "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+/", "slice", "indexOf", "", "", ".", "pow", "reduce", "reverse", "0"];
 
 function _0xe89c(sd, aR, bN) {
@@ -37,126 +44,69 @@ function decodeKwik(ew, Lx, UC, OA, cF, ao) {
     return decodeURIComponent(escape(ao));
 }
 
-async function getKwikMp4(kwikUrl) {
-    try {
-        const response = await axios.get(kwikUrl, {
-            headers: {
-                'referer': 'https://animepahe.si/',
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
-            }
-        });
-
-        const $ = cheerio.load(response.data);
-        const script = $('script').filter((i, el) => $(el).text().includes('eval')).text();
-        if (!script) return null;
-
-        const match = script.match(/\("(.+?)",(\d+),"(.+?)",(\d+),(\d+),(\d+)\)/);
-        if (match) {
-            const decoded = decodeKwik(match[1], parseInt(match[2]), match[3], parseInt(match[4]), parseInt(match[5]), parseInt(match[6]));
-            const tokenMatch = decoded.match(/value="([^"]+)"/);
-            const actionMatch = decoded.match(/action="([^"]+)"/);
-
-            if (tokenMatch && actionMatch) {
-                const token = tokenMatch[1];
-                const action = actionMatch[1];
-                const cookies = response.headers['set-cookie'] ? response.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') : '';
-
-                const postRes = await axios.post(action, `_token=${token}`, {
-                    headers: {
-                        'referer': kwikUrl,
-                        'cookie': cookies,
-                        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-                        'content-type': 'application/x-www-form-urlencoded'
-                    },
-                    maxRedirects: 0,
-                    validateStatus: (status) => status >= 200 && status < 400
-                });
-                return postRes.headers.location || null;
-            }
+// Helper to block useless resources for speed
+async function blockUselessResources(page) {
+    await page.route('**/*', route => {
+        const type = route.request().resourceType();
+        // Abort images, CSS, fonts, and media. Allow document, script, xhr, fetch.
+        if (['image', 'stylesheet', 'font', 'media', 'manifest', 'other'].includes(type)) {
+            route.abort();
+        } else {
+            route.continue();
         }
-        return null;
-    } catch (error) {
-        if (error.response && error.response.status === 302) return error.response.headers.location;
-        return null;
-    }
+    });
 }
 
 // --- Express Routes ---
 app.get('/api/anime/download', async (req, res) => {
     const { animeId, episodeId } = req.query;
 
-    // Validate query parameters
     if (!animeId || !episodeId) {
-        return res.status(400).json({
-            developer: "arcane",
-            success: false,
-            status: 400,
-            message: "Missing 'animeId' or 'episodeId' query parameters."
-        });
+        return res.status(400).json({ developer: "arcane", success: false, status: 400, message: "Missing query parameters." });
     }
 
     const playUrl = `https://animepahe.si/play/${animeId}/${episodeId}`;
-
-    const cookies = [
-        '__ddgid_=syw9aDJv7U1jNBi4',
-        '__ddgmark_=ty7rT9IGnl4AmirS',
-        '__ddg2_=9U7a4sOjY35rHJYY',
-        '__ddg1_=yZ8wJdZ9i4kQUKz2vDCj',
-        'res=1080',
-        'aud=jpn',
-        'av1=0',
-        '__ddg9_=102.89.75.29',
-        'latest=6461',
-        '__ddg8_=mCvoUEEU9wCq5xDx',
-        '__ddg10_=1770543833',
-        'XSRF-TOKEN=eyJpdiI6InZ5Um1sZVNlM1AyUnV2dnh1em1zR0E9PSIsInZhbHVlIjoibGVVUW1JWFRaRFZ2ZU0ydFJ1UU5xOWZyMVNHVEtPTU9GeWlkbVBLMVpjL2lvNlZMb3Ftc3BSbjJMT2JyT0psdHdodjRUQkIxOEhhRHR6YTZrNTZ2Tis1MEFTanQ2bk93WWFEZVdwZ0J3bStDanl6WkVoNmFPQzFKT0YwZ2ZLbVciLCJtYWMiOiJmMWQ4MDgyMjhlZDA3ZTg3NDE1MDRkOTI0ZmQzODdjNTlkNmY3MDgzZGZhMzFkZGU3YTY3OGY1OTRhYmQ4YjE4IiwidGFnIjoiIn0%3D',
-        'laravel_session=eyJpdiI6Ii92WlpuamVJNFVXRWhzMnVMT05wRkE9PSIsInZhbHVlIjoiTFlFNHVvV21DdmVVdGYvUjhDYmsydkdBY1Evd3c1NCs1RWZxdjVzSkxaRlFpRlZxTjdsY2wyZjhxbFA0ck1KZzMwcE9pNUdDTWR2NGlOZ2hPWERiZVNyRzdhUnJSRVpXanRnS3lwdHNWdVB3WjdYM2V4a1B5NWlYUHFmQzZrTk4iLCJtYWMiOiIxY2RmZmUyYmQ3OWM4ZTVlZWYwNzA5NDZjY2NhN2FiMjQ0ZTlkNDA1MDcxY2UxNWZkZDcxZWUwZWU3ODRkMTIzIiwidGFnIjoiIn0%3D'
-    ].join('; ');
-
-    const commonHeaders = {
-        'accept-language': 'en-US,en;q=0.9',
-        'cookie': cookies,
-        'referer': 'https://animepahe.si/',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
-    };
-
+    
+    // Create a new lightweight browser context for this specific API request
+    const context = await globalBrowser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+    
     try {
-        const response = await axios.get(playUrl, { headers: commonHeaders });
-        const $ = cheerio.load(response.data);
+        const page = await context.newPage();
+        await blockUselessResources(page);
 
+        // Smart Waiting: Only wait for the DOM, not images/network idle
+        await page.goto(playUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        
+        // Wait specifically for the elements we need to appear
+        await page.waitForSelector('#downloadMenu .dropdown-item, a[href*="pahe.win"]', { timeout: 10000 }).catch(() => {});
+
+        const html = await page.content();
+        const $ = cheerio.load(html);
         const downloadLinks = [];
-        const dropdownItems = $('#downloadMenu .dropdown-item');
 
-        dropdownItems.each((i, el) => {
+        $('#downloadMenu .dropdown-item').each((i, el) => {
             const $el = $(el);
             const text = $el.text().trim();
-            const url = $el.attr('href');
-            const resolutionMatch = text.match(/(\d{3,4}p)/);
-            const sizeMatch = text.match(/\((\d+(?:\.\d+)?\s*[KMG]B)\)/i);
             const isEng = $el.find('.badge-warning').text().trim().toLowerCase() === 'eng' || text.toLowerCase().includes(' eng');
-
             downloadLinks.push({
-                resolution: resolutionMatch ? resolutionMatch[1] : null,
-                size: sizeMatch ? sizeMatch[1] : null,
+                resolution: (text.match(/(\d{3,4}p)/) || [])[1] || null,
+                size: (text.match(/\((\d+(?:\.\d+)?\s*[KMG]B)\)/i) || [])[1] || null,
                 audio: isEng ? 'eng' : 'jpn',
-                url: url
+                url: $el.attr('href')
             });
         });
 
-        // Fallback to searching all anchor tags if the dropdown menu is empty
         if (downloadLinks.length === 0) {
             $('a').each((i, el) => {
-                const $el = $(el);
-                const href = $el.attr('href');
+                const href = $(el).attr('href');
                 if (href && (href.includes('pahe.win') || href.includes('kwik.si'))) {
-                    const text = $el.text().trim();
-                    const resolutionMatch = text.match(/(\d{3,4}p)/);
-                    const sizeMatch = text.match(/\((\d+(?:\.\d+)?\s*[KMG]B)\)/i);
+                    const text = $(el).text().trim();
                     const isEng = text.toLowerCase().includes(' eng');
-
                     downloadLinks.push({
-                        resolution: resolutionMatch ? resolutionMatch[1] : null,
-                        size: sizeMatch ? sizeMatch[1] : null,
+                        resolution: (text.match(/(\d{3,4}p)/) || [])[1] || null,
+                        size: (text.match(/\((\d+(?:\.\d+)?\s*[KMG]B)\)/i) || [])[1] || null,
                         audio: isEng ? 'eng' : 'jpn',
                         url: href
                     });
@@ -164,58 +114,75 @@ app.get('/api/anime/download', async (req, res) => {
             });
         }
 
+        // Close the main page early to free up memory
+        await page.close();
+
+        // Process all download links concurrently using the same browser context
         const fetchKwikAndMp4 = async (link) => {
+            let linkPage = null;
             try {
-                const paheRes = await axios.get(link.url, {
-                    headers: {
-                        'cookie': cookies,
-                        'user-agent': commonHeaders['user-agent']
-                    }
-                });
+                linkPage = await context.newPage();
+                await blockUselessResources(linkPage);
+
+                // Visit pahe.win url
+                await linkPage.goto(link.url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                const paheHtml = await linkPage.content();
+                const kwikMatch = paheHtml.match(/https:\/\/kwik\.(?:cx|si)\/f\/[a-zA-Z0-9]+/);
                 
-                const kwikMatch = paheRes.data.match(/https:\/\/kwik\.(?:cx|si)\/f\/[a-zA-Z0-9]+/);
+                if (!kwikMatch) throw new Error("Kwik link not found");
+                const kwikUrl = kwikMatch[0];
+
+                // Visit Kwik URL to solve Cloudflare/DDoS-Guard and get the script
+                await linkPage.goto(kwikUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                const kwikHtml = await linkPage.content();
+                const _$ = cheerio.load(kwikHtml);
                 
-                if (kwikMatch) {
-                    const kwikUrl = kwikMatch[0];
-                    const mp4Url = await getKwikMp4(kwikUrl);
-                    
-                    let m3u8Url = null;
+                const script = _$('script').filter((i, el) => _$(el).text().includes('eval')).text();
+                if (!script) throw new Error("Kwik packer script not found");
+
+                const match = script.match(/\("(.+?)",(\d+),"(.+?)",(\d+),(\d+),(\d+)\)/);
+                if (!match) throw new Error("Could not extract Kwik packer variables");
+
+                const decoded = decodeKwik(match[1], parseInt(match[2]), match[3], parseInt(match[4]), parseInt(match[5]), parseInt(match[6]));
+                const tokenMatch = decoded.match(/value="([^"]+)"/);
+                const actionMatch = decoded.match(/action="([^"]+)"/);
+
+                let mp4Url = null;
+                let m3u8Url = null;
+
+                if (tokenMatch && actionMatch) {
+                    const token = tokenMatch[1];
+                    const action = actionMatch[1];
+
+                    // Use Playwright's built-in APIRequestContext for lightning-fast POSTs (inherits context cookies automatically)
+                    const postRes = await context.request.post(action, {
+                        data: `_token=${token}`,
+                        headers: {
+                            'referer': kwikUrl,
+                            'content-type': 'application/x-www-form-urlencoded'
+                        },
+                        maxRedirects: 0 // Stop at the 302 redirect so we can grab the 'location' header
+                    });
+
+                    mp4Url = postRes.headers()['location'] || null;
                     if (mp4Url) {
                         m3u8Url = mp4Url.replace('/mp4/', '/stream/').split('?')[0] + '/uwu.m3u8';
                     }
-
-                    return {
-                        resolution: link.resolution,
-                        size: link.size,
-                        audio: link.audio,
-                        mp4Url: mp4Url,
-                        m3u8Url: m3u8Url
-                    };
                 }
-                
-                return {
-                    resolution: link.resolution,
-                    size: link.size,
-                    audio: link.audio,
-                    mp4Url: null,
-                    m3u8Url: null
-                };
+
+                await linkPage.close();
+                return { ...link, mp4Url, m3u8Url };
+
             } catch (err) {
-                return {
-                    resolution: link.resolution,
-                    size: link.size,
-                    audio: link.audio,
-                    mp4Url: null,
-                    m3u8Url: null
-                };
+                if (linkPage) await linkPage.close().catch(() => {});
+                return { ...link, mp4Url: null, m3u8Url: null };
             }
         };
 
-        // Resolve all links concurrently
+        // Resolve all links at the same time
         const finalLinks = await Promise.all(downloadLinks.map(fetchKwikAndMp4));
 
-        // Return the formatted response
-        return res.status(200).json({
+        res.status(200).json({
             developer: "arcane",
             success: true,
             status: 200,
@@ -226,17 +193,26 @@ app.get('/api/anime/download', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error in /api/anime/download:', error.message);
-        return res.status(500).json({
-            developer: "arcane",
-            success: false,
-            status: 500,
-            message: "An error occurred while fetching the download links.",
-            error: error.message
-        });
+        console.error('Scraping Error:', error.message);
+        res.status(500).json({ success: false, status: 500, message: "Error fetching links", error: error.message });
+    } finally {
+        // ALWAYS close the context to clear cookies and free memory
+        await context.close().catch(() => {});
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+// Start the server and launch the global browser
+app.listen(PORT, async () => {
+    console.log(`Server starting on port ${PORT}...`);
+    globalBrowser = await chromium.launch({ 
+        headless: true,
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage', // Crucial for low-memory servers
+            '--disable-gpu'
+        ]
+    });
+    console.log('Playwright Global Browser launched successfully.');
 });
+            
