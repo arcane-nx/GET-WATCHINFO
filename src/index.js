@@ -85,6 +85,20 @@ async function getKwikMp4(kwikUrl) {
 
 export default {
   async fetch(request, env, ctx) {
+    // --- 1. Define CORS Headers ---
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    // --- 2. Handle Browser Preflight (OPTIONS) Requests ---
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: corsHeaders
+      });
+    }
+
     // 1. Parse the incoming request URL to grab query parameters
     const url = new URL(request.url);
     const animeSession = url.searchParams.get('animeId');
@@ -96,7 +110,10 @@ export default {
         error: "Missing required query parameters. Please provide both ?animeId=... and &episodeId=..." 
       }, null, 2), { 
         status: 400,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...corsHeaders // Add CORS here
+        }
       });
     }
 
@@ -222,13 +239,19 @@ export default {
         referer: 'https://kwik.cx/',
         downloadLinks: finalLinks
       }, null, 2), {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...corsHeaders // Add CORS here
+        }
       });
 
     } catch (error) {
       return new Response(JSON.stringify({ error: error.message }), { 
         status: 500,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...corsHeaders // Add CORS here
+        }
       });
     }
   }
