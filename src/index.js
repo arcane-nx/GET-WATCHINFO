@@ -85,9 +85,22 @@ async function getKwikMp4(kwikUrl) {
 
 export default {
   async fetch(request, env, ctx) {
-    // You can make these dynamic later by pulling them from the request URL
-    const animeSession = '78e38106-d9f3-a8b5-7974-9702f603dc96';
-    const episodeSession = '354f591022424c75c72b9e1fc4efe2cee1a33d2c45db62db914c5d79acd4808e';
+    // 1. Parse the incoming request URL to grab query parameters
+    const url = new URL(request.url);
+    const animeSession = url.searchParams.get('animeId');
+    const episodeSession = url.searchParams.get('episodeId');
+
+    // 2. Error handling: check if both parameters were provided
+    if (!animeSession || !episodeSession) {
+      return new Response(JSON.stringify({ 
+        error: "Missing required query parameters. Please provide both ?animeId=... and &episodeId=..." 
+      }, null, 2), { 
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // 3. Construct the URL dynamically
     const playUrl = `https://animepahe.si/play/${animeSession}/${episodeSession}`;
 
     const cookies = [
@@ -205,7 +218,6 @@ export default {
 
       const finalLinks = await Promise.all(downloadLinks.map(fetchKwikAndMp4));
 
-      // Return standard JSON response
       return new Response(JSON.stringify({
         referer: 'https://kwik.cx/',
         downloadLinks: finalLinks
