@@ -55,7 +55,6 @@ async function getKwikMp4(kwikUrl) {
         const token = tokenMatch[1];
         const action = actionMatch[1];
         
-        // Grab set-cookie from the fetch response headers
         const setCookieHeader = response.headers.get('set-cookie');
         const cookies = setCookieHeader ? setCookieHeader.split(';')[0] : '';
 
@@ -68,10 +67,9 @@ async function getKwikMp4(kwikUrl) {
             'content-type': 'application/x-www-form-urlencoded'
           },
           body: `_token=${token}`,
-          redirect: 'manual' // This replaces axios maxRedirects: 0 to catch the 302 location
+          redirect: 'manual'
         });
 
-        // If it's a redirect, grab the location header
         if (postRes.status >= 300 && postRes.status < 400) {
           return postRes.headers.get('location') || null;
         }
@@ -85,39 +83,38 @@ async function getKwikMp4(kwikUrl) {
 
 export default {
   async fetch(request, env, ctx) {
-    // --- 1. Define CORS Headers ---
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
-    // --- 2. Handle Browser Preflight (OPTIONS) Requests ---
     if (request.method === "OPTIONS") {
       return new Response(null, {
         headers: corsHeaders
       });
     }
 
-    // 1. Parse the incoming request URL to grab query parameters
     const url = new URL(request.url);
     const animeSession = url.searchParams.get('animeId');
     const episodeSession = url.searchParams.get('episodeId');
 
-    // 2. Error handling: check if both parameters were provided
+    // Updated Missing Parameters Error Response
     if (!animeSession || !episodeSession) {
-      return new Response(JSON.stringify({ 
+      return new Response(JSON.stringify({
+        developer: "arcane",
+        success: false,
+        status: 400,
         error: "Missing required query parameters. Please provide both ?animeId=... and &episodeId=..." 
       }, null, 2), { 
         status: 400,
         headers: { 
           'Content-Type': 'application/json',
-          ...corsHeaders // Add CORS here
+          ...corsHeaders 
         }
       });
     }
 
-    // 3. Construct the URL dynamically
     const playUrl = `https://animepahe.si/play/${animeSession}/${episodeSession}`;
 
     const cookies = [
@@ -235,22 +232,35 @@ export default {
 
       const finalLinks = await Promise.all(downloadLinks.map(fetchKwikAndMp4));
 
+      // Updated Success Response
       return new Response(JSON.stringify({
-        referer: 'https://kwik.cx/',
-        downloadLinks: finalLinks
+        developer: "arcane",
+        success: true,
+        status: 200,
+        results: {
+          referer: 'https://kwik.cx/',
+          downloadLinks: finalLinks
+        }
       }, null, 2), {
+        status: 200,
         headers: { 
           'Content-Type': 'application/json',
-          ...corsHeaders // Add CORS here
+          ...corsHeaders 
         }
       });
 
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), { 
+      // Updated Server Error Response
+      return new Response(JSON.stringify({ 
+        developer: "arcane",
+        success: false,
+        status: 500,
+        error: error.message 
+      }, null, 2), { 
         status: 500,
         headers: { 
           'Content-Type': 'application/json',
-          ...corsHeaders // Add CORS here
+          ...corsHeaders 
         }
       });
     }
